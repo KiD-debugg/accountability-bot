@@ -43,6 +43,7 @@ A personal Telegram bot that keeps me strictly accountable to my daily, weekly, 
 2. Create a virtual environment:
 ```bash
    python -m venv venv
+   source venv\Scripts\activate.bat
    venv\Scripts\activate     # Windows
 ```
 3. Install dependencies:
