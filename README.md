@@ -43,7 +43,6 @@ A personal Telegram bot that keeps me strictly accountable to my daily, weekly, 
 2. Create a virtual environment:
 ```bash
    python -m venv venv
-   source venv/bin/activate  # Mac/Linux
    venv\Scripts\activate     # Windows
 ```
 3. Install dependencies:
@@ -51,3 +50,23 @@ A personal Telegram bot that keeps me strictly accountable to my daily, weekly, 
    pip install -r requirements.txt
 ```
 4. Create a `.env` file with your credentials:
+TELEGRAM_BOT_TOKEN=your_token_here
+YOUR_TELEGRAM_USER_ID=your_user_id_here
+5. Run the bot:
+```bash
+   python bot.py
+```
+
+## Project Structure
+accountability-bot/
+├── bot.py          # Main bot logic and command handlers
+├── database.py     # Database operations
+├── scheduler.py    # Scheduled automated messages
+├── config.py       # Environment variable loader
+├── requirements.txt
+└── README.md
+## Author
+
+Benjamin Ochieng  
+Civil & Structural Engineer transitioning into Data & Analytics  
+[GitHub Profile](https://github.com/KiD-debugg)
