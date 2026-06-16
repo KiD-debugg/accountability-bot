@@ -16,7 +16,7 @@ from config import BOT_TOKEN, YOUR_USER_ID
 import logging
 logger = logging.getLogger(__name__)
 from database import initialize_database, add_goal, get_goals, record_checkin, get_todays_summary, get_goal_status_today
-
+from ai_handler import process_message, build_system_context
 # Conversation states - these are just numbers used to track
 # where the user is in a multi-step conversation
 WAITING_FOR_GOAL_TEXT = 1
@@ -320,6 +320,27 @@ async def post_init(application):
     scheduler.start()
     logger.info("Scheduler started successfully with Nairobi timezone.")
 
+async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Catches any message that is not a command and sends it to Gemini.
+    This makes the bot conversational and interactive.
+    """
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+
+    user_message = update.message.text.strip()
+
+    # Show typing indicator while Gemini processes
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id,
+        action="typing"
+    )
+
+    # Get response from Gemini
+    response = process_message(user_message)
+
+    await update.message.reply_text(response)
 
 def main():
     """Starts the bot with the scheduler."""
@@ -353,15 +374,19 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # Register all handlers
+# Register all handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("viewgoals", view_goals))
     app.add_handler(CommandHandler("summary", summary))
     app.add_handler(add_goal_handler)
     app.add_handler(checkin_handler)
 
+    # This must be registered LAST
+    # It catches any message that is not a command
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_text))
     print("Bot is running with scheduler. Press Ctrl+C to stop.")
     app.run_polling()
+
 
 
 if __name__ == "__main__":
