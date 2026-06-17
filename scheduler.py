@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
 from config import BOT_TOKEN, YOUR_USER_ID
-from database import get_goals, get_todays_summary, get_goal_status_today
+from database import get_goals, get_todays_summary, get_goal_status_today, get_repeating_goals_for_weekday
 
 # Set up logging so we can see scheduler activity in the terminal
 logging.basicConfig(level=logging.INFO)
@@ -75,16 +75,21 @@ async def send_checkin_reminder(bot: Bot):
             get_goals("monthly")
         )
 
-        if not all_goals:
+        today = datetime.now(NAIROBI_TZ).strftime('%A')
+        repeated_goals = get_repeating_goals_for_weekday(today)
+
+        if not all_goals and not repeated_goals:
             return
 
         already_checked = any(
             get_goal_status_today(goal_id) is not None
             for goal_id, _ in all_goals
+        ) or any(
+            get_goal_status_today(goal_id) is not None
+            for goal_id, _, _, _ in repeated_goals
         )
 
         if already_checked:
-            # He already checked in — send an acknowledgement instead
             message = (
                 "✅ I can see you have already checked in today.\n\n"
                 "Use /summary to see your results."
@@ -103,6 +108,40 @@ async def send_checkin_reminder(bot: Bot):
 
     except Exception as e:
         logger.error(f"Failed to send check-in reminder: {e}")
+
+
+async def send_repeating_goal_summary(bot: Bot):
+    """
+    Sent every day after the morning briefing to review today's repeating goals.
+    """
+    try:
+        today = datetime.now(NAIROBI_TZ).strftime('%A')
+        goals = get_repeating_goals_for_weekday(today)
+
+        if not goals:
+            return
+
+        message = "🔁 TODAY'S REPEATING GOALS\n"
+        message += "─────────────────\n\n"
+        message += "These goals are set to remind you today.\n\n"
+
+        for goal_id, goal_text, repeat_days, repeat_length in goals:
+            days_display = repeat_days.replace(',', ', ') if repeat_days else "None"
+            length_display = f"{repeat_length} days" if repeat_length else "No limit"
+            message += (
+                f"ID {goal_id}: {goal_text}\n"
+                f"  Days: {days_display}\n"
+                f"  Length: {length_display}\n\n"
+            )
+
+        message += "─────────────────\n"
+        message += "Use /checkin when you are ready to log progress."
+
+        await bot.send_message(chat_id=YOUR_USER_ID, text=message)
+        logger.info("Repeating goal summary sent successfully.")
+
+    except Exception as e:
+        logger.error(f"Failed to send repeating goal summary: {e}")
 
 
 async def send_strict_followup(bot: Bot):
@@ -241,6 +280,15 @@ def create_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot],
         id="strict_followup",
         name="Strict Follow-up"
+    )
+
+    # 8:30 AM every day — repeating goal summary
+    scheduler.add_job(
+        send_repeating_goal_summary,
+        CronTrigger(hour=8, minute=30, timezone=NAIROBI_TZ),
+        args=[bot],
+        id="repeating_goal_summary",
+        name="Repeating Goal Summary"
     )
 
     # Every Sunday at 8:00 PM — weekly review
