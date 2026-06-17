@@ -3,13 +3,19 @@
 # All times are in East Africa Time (EAT) which is UTC+3
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
 from config import BOT_TOKEN, YOUR_USER_ID
-from database import get_goals, get_todays_summary, get_goal_status_today, get_repeating_goals_for_weekday
+from database import (
+    get_goals,
+    get_todays_summary,
+    get_goal_status_today,
+    get_repeating_goals_for_weekday,
+    get_time_based_goals,
+)
 
 # Set up logging so we can see scheduler activity in the terminal
 logging.basicConfig(level=logging.INFO)
@@ -142,6 +148,31 @@ async def send_repeating_goal_summary(bot: Bot):
 
     except Exception as e:
         logger.error(f"Failed to send repeating goal summary: {e}")
+
+
+async def send_timed_goal_reminders(bot: Bot):
+    """
+    Runs every minute and sends reminders 20 minutes before goals with a set time.
+    """
+    try:
+        now = datetime.now(NAIROBI_TZ)
+        reminder_time = (now + timedelta(minutes=20)).strftime('%H:%M')
+        goals = get_time_based_goals(reminder_time)
+
+        if not goals:
+            return
+
+        for goal_id, goal_text, goal_type, goal_time in goals:
+            message = (
+                f"⏰ REMINDER: {goal_text}\n"
+                f"You asked to be reminded at {goal_time}. This is your 20-minute warning."
+            )
+            await bot.send_message(chat_id=YOUR_USER_ID, text=message)
+
+        logger.info(f"Sent timed goal reminders for {reminder_time}.")
+
+    except Exception as e:
+        logger.error(f"Failed to send timed goal reminders: {e}")
 
 
 async def send_strict_followup(bot: Bot):
@@ -332,6 +363,15 @@ def create_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot],
         id="repeating_goal_summary",
         name="Repeating Goal Summary"
+    )
+
+    # Every minute — timed goal reminders (remind 20 minutes before goal_time)
+    scheduler.add_job(
+        send_timed_goal_reminders,
+        CronTrigger(minute='*', timezone=NAIROBI_TZ),
+        args=[bot],
+        id="timed_goal_reminders",
+        name="Timed Goal Reminders"
     )
 
     # Every Sunday at 8:00 PM — weekly review

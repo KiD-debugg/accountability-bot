@@ -29,6 +29,8 @@ def initialize_database():
             goal_type TEXT NOT NULL,
             repeat_days TEXT,
             repeat_length INTEGER,
+            goal_time TEXT,
+            goal_date TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -40,6 +42,10 @@ def initialize_database():
         cursor.execute("ALTER TABLE goals ADD COLUMN repeat_days TEXT")
     if "repeat_length" not in existing_columns:
         cursor.execute("ALTER TABLE goals ADD COLUMN repeat_length INTEGER")
+    if "goal_time" not in existing_columns:
+        cursor.execute("ALTER TABLE goals ADD COLUMN goal_time TEXT")
+    if "goal_date" not in existing_columns:
+        cursor.execute("ALTER TABLE goals ADD COLUMN goal_date TEXT")
 
     # Table to store your daily check-in responses
     cursor.execute("""
@@ -57,11 +63,13 @@ def initialize_database():
     print("Database initialized successfully.")
 
 
-def add_goal(goal_text, goal_type, repeat_days=None, repeat_length=None):
+def add_goal(goal_text, goal_type, repeat_days=None, repeat_length=None, goal_time=None, goal_date=None):
     """
     Adds a new goal to the database.
     goal_type should be: 'daily', 'weekly', 'monthly', or 'repeating'
     repeat_days and repeat_length are only used for repeating goals.
+    goal_time is an optional daily time string in HH:MM format.
+    goal_date is an optional date string in YYYY-MM-DD format.
     """
     # Input validation - only allow safe goal types
     allowed_types = ["daily", "weekly", "monthly", "repeating"]
@@ -73,8 +81,8 @@ def add_goal(goal_text, goal_type, repeat_days=None, repeat_length=None):
 
     # Using parameterized queries to prevent SQL injection
     cursor.execute(
-        "INSERT INTO goals (goal_text, goal_type, repeat_days, repeat_length) VALUES (?, ?, ?, ?)",
-        (goal_text, goal_type, repeat_days, repeat_length)
+        "INSERT INTO goals (goal_text, goal_type, repeat_days, repeat_length, goal_time, goal_date) VALUES (?, ?, ?, ?, ?, ?)",
+        (goal_text, goal_type, repeat_days, repeat_length, goal_time, goal_date)
     )
 
     conn.commit()
@@ -96,13 +104,28 @@ def get_repeating_goals():
     return goals
 
 
+def get_time_based_goals(goal_time):
+    """Retrieves goals that have a specific reminder time."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id, goal_text, goal_type, goal_time FROM goals WHERE goal_time = ?",
+        (goal_time,)
+    )
+
+    goals = cursor.fetchall()
+    conn.close()
+    return goals
+
+
 def get_goal_by_id(goal_id):
     """Retrieves a goal by its ID."""
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT id, goal_text, goal_type, repeat_days, repeat_length FROM goals WHERE id = ?",
+        "SELECT id, goal_text, goal_type, repeat_days, repeat_length, goal_time FROM goals WHERE id = ?",
         (goal_id,)
     )
 

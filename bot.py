@@ -21,6 +21,7 @@ from database import (
     add_goal,
     get_goals,
     get_repeating_goals,
+    get_time_based_goals,
     get_goal_by_id,
     record_checkin,
     get_todays_summary,
@@ -45,6 +46,122 @@ WAITING_FOR_EDIT_ACTION = 9
 WAITING_FOR_EDIT_NEW_TEXT = 10
 WAITING_FOR_EDIT_NEW_SCHEDULE = 11
 WAITING_FOR_EDIT_NEW_LENGTH = 12
+WAITING_FOR_GOAL_TIME = 13
+WAITING_FOR_GOAL_DATE = 14
+
+
+def parse_time_input(raw_time: str) -> str | None:
+    """
+    Parses time input in multiple formats and returns HH:MM in 24-hour format.
+    Supports: 14:30, 2:30 PM, 2:30pm, 14.30, 2.30 AM, etc.
+    Returns None if format is invalid.
+    """
+    raw_time = raw_time.strip().lower()
+    
+    # Try 24-hour format: HH:MM or HH.MM
+    match = re.match(r"^([01]?\d|2[0-3])[:.]([0-5]\d)$", raw_time)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        return f"{hour:02d}:{minute:02d}"
+    
+    # Try 12-hour format with AM/PM: H:MM AM/PM, HH:MM AM/PM, H.MM AM/PM, etc.
+    match = re.match(r"^([1-9]|1[0-2])[:.]([0-5]\d)\s*(am|pm)$", raw_time)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        meridiem = match.group(3)
+        
+        if meridiem == "pm" and hour != 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        
+        return f"{hour:02d}:{minute:02d}"
+    
+    # Try 12-hour without space: 2:30PM, 2:30pm, etc.
+    match = re.match(r"^([1-9]|1[0-2])[:.]([0-5]\d)(am|pm)$", raw_time)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        meridiem = match.group(3)
+        
+        if meridiem == "pm" and hour != 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        
+        return f"{hour:02d}:{minute:02d}"
+    
+    return None
+
+
+def parse_date_input(raw_date: str) -> str | None:
+    """
+    Parses date input in multiple formats and returns YYYY-MM-DD.
+    Supports: 2026-06-17, 17-06-2026, 17/06/2026, today, tomorrow, Monday, etc.
+    Returns None if format is invalid.
+    """
+    from datetime import datetime, timedelta
+    
+    raw_date = raw_date.strip().lower()
+    today = datetime.now()
+    
+    # Skip date if user says no
+    if raw_date in ["none", "no", "n", "skip"]:
+        return None
+    
+    # Today
+    if raw_date in ["today", "now"]:
+        return today.strftime("%Y-%m-%d")
+    
+    # Tomorrow
+    if raw_date == "tomorrow":
+        tomorrow = today + timedelta(days=1)
+        return tomorrow.strftime("%Y-%m-%d")
+    
+    # Day of week (Monday, tuesday, etc.)
+    day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    if raw_date in day_names:
+        target_day = day_names.index(raw_date)
+        current_day = today.weekday()
+        days_ahead = target_day - current_day
+        if days_ahead <= 0:
+            days_ahead += 7
+        future_date = today + timedelta(days=days_ahead)
+        return future_date.strftime("%Y-%m-%d")
+    
+    # YYYY-MM-DD format
+    match = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", raw_date)
+    if match:
+        try:
+            year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            date_obj = datetime(year, month, day)
+            return date_obj.strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+    
+    # DD-MM-YYYY format
+    match = re.match(r"^(\d{1,2})-(\d{1,2})-(\d{4})$", raw_date)
+    if match:
+        try:
+            day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            date_obj = datetime(year, month, day)
+            return date_obj.strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+    
+    # DD/MM/YYYY format
+    match = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", raw_date)
+    if match:
+        try:
+            day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            date_obj = datetime(year, month, day)
+            return date_obj.strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+    
+    return None
 
 
 def is_authorized(user_id: int) -> bool:
@@ -104,7 +221,7 @@ async def add_goal_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_goal_get_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the goal type and saves everything to the database."""
+    """Receives the goal type and asks for the reminder time."""
     goal_type = update.message.text.strip().lower()
 
     if goal_type not in ["daily", "weekly", "monthly"]:
@@ -113,15 +230,91 @@ async def add_goal_get_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return WAITING_FOR_GOAL_TYPE
 
+    context.user_data["goal_type"] = goal_type
+
+    await update.message.reply_text(
+        "What time should I remind you? Reply in HH:MM format, or type none if you do not want a time reminder."
+    )
+    return WAITING_FOR_GOAL_TIME
+
+
+async def add_goal_get_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receives reminder time and asks for optional date."""
+    raw_time = update.message.text.strip()
     goal_text = context.user_data.get("goal_text")
+    goal_type = context.user_data.get("goal_type")
+
+    if not goal_text or not goal_type:
+        await update.message.reply_text(
+            "Something went wrong. Start again with /addgoal."
+        )
+        return ConversationHandler.END
+
+    goal_time = None
+    if raw_time.lower() not in ["none", "no", "n", "skip"] and raw_time:
+        goal_time = parse_time_input(raw_time)
+        
+        if not goal_time:
+            await update.message.reply_text(
+                "I couldn't parse that time. Please use one of these formats:\n\n"
+                "24-hour: 14:30 or 14.30\n"
+                "12-hour: 2:30 PM or 2:30pm or 2:30 AM\n"
+                "Or type 'none' if you don't want a time reminder."
+            )
+            return WAITING_FOR_GOAL_TIME
+
+    context.user_data["goal_time"] = goal_time
+    
+    await update.message.reply_text(
+        "When should this goal happen?\n\n"
+        "You can reply with:\n"
+        "today, tomorrow, Monday, 2026-06-20, 20-06-2026, 20/06/2026\n"
+        "Or type 'none' if you don't want to set a date."
+    )
+    return WAITING_FOR_GOAL_DATE
+
+
+async def add_goal_get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receives optional date and saves the goal."""
+    raw_date = update.message.text.strip()
+    goal_text = context.user_data.get("goal_text")
+    goal_type = context.user_data.get("goal_type")
+    goal_time = context.user_data.get("goal_time")
+
+    if not goal_text or not goal_type:
+        await update.message.reply_text(
+            "Something went wrong. Start again with /addgoal."
+        )
+        return ConversationHandler.END
+
+    goal_date = None
+    if raw_date.lower() not in ["none", "no", "n", "skip"] and raw_date:
+        goal_date = parse_date_input(raw_date)
+        
+        if not goal_date:
+            await update.message.reply_text(
+                "I couldn't parse that date. Please use one of these formats:\n\n"
+                "today, tomorrow, Monday, Friday\n"
+                "YYYY-MM-DD (2026-06-20)\n"
+                "DD-MM-YYYY (20-06-2026)\n"
+                "DD/MM/YYYY (20/06/2026)\n"
+                "Or type 'none' to skip the date."
+            )
+            return WAITING_FOR_GOAL_DATE
 
     try:
-        add_goal(goal_text, goal_type)
+        add_goal(goal_text, goal_type, goal_time=goal_time, goal_date=goal_date)
         context.user_data["last_action"] = "add_goal"
+        
+        time_display = goal_time if goal_time else "No time set"
+        date_display = goal_date if goal_date else "No date set"
+        
         await update.message.reply_text(
             f"Goal saved.\n\n"
             f"Goal: {goal_text}\n"
-            f"Type: {goal_type.capitalize()}"
+            f"Type: {goal_type.capitalize()}\n"
+            f"Time: {time_display}\n"
+            f"Date: {date_display}"
         )
     except Exception as e:
         await update.message.reply_text("Something went wrong saving your goal. Please try again.")
@@ -1009,6 +1202,8 @@ def main():
         states={
             WAITING_FOR_GOAL_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_goal_get_text)],
             WAITING_FOR_GOAL_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_goal_get_type)],
+            WAITING_FOR_GOAL_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_goal_get_time)],
+            WAITING_FOR_GOAL_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_goal_get_date)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
