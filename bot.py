@@ -28,6 +28,8 @@ from database import (
     update_goal_text,
     update_repeating_goal_schedule,
     delete_goal,
+    search_goals_by_keyword,
+    get_all_incomplete_daily_goals,
 )
 # Conversation states - these are just numbers used to track
 # where the user is in a multi-step conversation
@@ -558,9 +560,17 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def parse_direct_goal_message(user_message: str) -> str | None:
     """Parse direct goal messages like 'Daily goal: Read 10 pages.'"""
     normalized = user_message.strip()
-    match = re.match(r"^(daily|weekly|monthly)\s+goal\s*[:\-]?\s*(.+)$", normalized, re.IGNORECASE)
+
+    # Accept messages like "Addgoal, monthly goal: Read 10 pages." or "Add goal: daily goal: Read..."
+    match = re.match(
+        r"^(?:add\s*goal|addgoal|new\s*goal)\s*[.,:\-]?\s*(daily|weekly|monthly)\s+goal\s*[:\-]?\s*(.+)$",
+        normalized,
+        re.IGNORECASE,
+    )
     if not match:
-        return None
+        match = re.match(r"^(daily|weekly|monthly)\s+goal\s*[:\-]?\s*(.+)$", normalized, re.IGNORECASE)
+        if not match:
+            return None
 
     goal_type = match.group(1).lower()
     goal_text = match.group(2).strip()
@@ -571,6 +581,216 @@ def parse_direct_goal_message(user_message: str) -> str | None:
 
     add_goal(goal_text, goal_type)
     return f"✅ Goal saved: {goal_text} ({goal_type})"
+
+
+def detect_goal_addition_intent(user_message: str) -> dict:
+    """
+    Detects if user wants to add a goal and extracts goal details.
+    Returns a dict with keys: 'detected', 'goal_text', 'goal_type', 'response'
+    """
+    normalized = user_message.strip()
+    lower_msg = normalized.lower()
+    
+    # Pattern 1: "I want to add a goal: <goal_text>"
+    match = re.match(r"i\s+want\s+to\s+add\s+(?:a\s+)?goal\s*[:\-]?\s*(.+)", lower_msg)
+    if match:
+        goal_text = match.group(1).strip()
+        if goal_text:
+            return {
+                "detected": True,
+                "goal_text": goal_text,
+                "goal_type": None,
+                "needs_type": True,
+                "response": f"Got it! So your goal is: \"{goal_text}\"\n\nWhat type? Reply: daily, weekly, or monthly"
+            }
+    
+    # Pattern 2: "Addgoal, monthly goal: ..." or "Add goal: daily goal: ..."
+    match = re.match(
+        r"^(?:add\s*goal|addgoal|new\s*goal)\s*[.,:\-]?\s*(daily|weekly|monthly)\s+goal\s*[:\-]?\s*(.+)$",
+        lower_msg,
+    )
+    if match:
+        goal_type = match.group(1).lower()
+        goal_text = match.group(2).strip()
+        if goal_text:
+            return {
+                "detected": True,
+                "goal_text": goal_text,
+                "goal_type": goal_type,
+                "needs_type": False,
+                "response": f"✅ Goal saved: \"{goal_text}\" ({goal_type})"
+            }
+
+    # Pattern 3: "Add a goal: <goal_text>" or "Add goal: <goal_text>"
+    match = re.match(r"^(?:add\s*goal|addgoal|new\s*goal)\s*[:\-]?\s*(.+)$", lower_msg)
+    if match:
+        goal_text = match.group(1).strip()
+        if goal_text:
+            return {
+                "detected": True,
+                "goal_text": goal_text,
+                "goal_type": None,
+                "needs_type": True,
+                "response": f"Great! Goal: \"{goal_text}\"\n\nWhat type? Reply: daily, weekly, or monthly"
+            }
+
+    # Pattern 4: "I have a new goal: <goal_text>" or "I have a goal: <goal_text>"
+    match = re.match(r"i\s+have\s+(?:a\s+)?(?:new\s+)?goal\s*[:\-]?\s*(.+)", lower_msg)
+    if match:
+        goal_text = match.group(1).strip()
+        if goal_text:
+            return {
+                "detected": True,
+                "goal_text": goal_text,
+                "goal_type": None,
+                "needs_type": True,
+                "response": f"Perfect! Goal: \"{goal_text}\"\n\nWhat type? Reply: daily, weekly, or monthly"
+            }
+    
+    # Pattern 4: "I want to: <goal_text>" or "I want to track: <goal_text>"
+    match = re.match(r"i\s+want\s+to\s+(?:track\s+)?(?:be\s+)?(?:start\s+)?[:\-]?\s*(.+)", lower_msg)
+    if match:
+        potential_goal = match.group(1).strip()
+        # Make sure this doesn't match too broadly - check for meaningful goal text
+        if len(potential_goal) > 5 and "add" not in potential_goal.lower():
+            return {
+                "detected": True,
+                "goal_text": potential_goal,
+                "goal_type": None,
+                "needs_type": True,
+                "response": f"Alright! Goal: \"{potential_goal}\"\n\nWhat type? Reply: daily, weekly, or monthly"
+            }
+    
+    # Pattern 5: "I need to: <goal_text>" or "I should: <goal_text>"
+    match = re.match(r"(?:i\s+need\s+to|i\s+should)\s+(?:start\s+)?[:\-]?\s*(.+)", lower_msg)
+    if match:
+        potential_goal = match.group(1).strip()
+        if len(potential_goal) > 5:
+            return {
+                "detected": True,
+                "goal_text": potential_goal,
+                "goal_type": None,
+                "needs_type": True,
+                "response": f"Got it! Goal: \"{potential_goal}\"\n\nWhat type? Reply: daily, weekly, or monthly"
+            }
+    
+    # No goal addition intent detected
+    return {
+        "detected": False,
+        "goal_text": None,
+        "goal_type": None,
+        "needs_type": False,
+        "response": None
+    }
+
+
+def detect_goal_completion_intent(user_message: str) -> dict:
+    """
+    Detects if user mentions completing a goal and extracts keywords to match.
+    Returns a dict with keys: 'detected', 'keywords', 'response'
+    """
+    normalized = user_message.strip()
+    lower_msg = normalized.lower()
+    
+    # Patterns to detect completion
+    completion_patterns = [
+        r"(?:i\s+)?(?:just\s+)?(?:completed|finished|done|did)\s+(?:my\s+)?(?:goal\s+)?[:\-]?\s*(.+)",
+        r"i\s+(?:completed|finished|did|have done)\s+(?:my\s+)?(?:goal\s+)?(?:of\s+)?[:\-]?\s*(.+)",
+        r"(?:done\s+with|finished|completed)\s+(?:my\s+)?[:\-]?\s*(.+)",
+        r"i\s+(?:just\s+)?(?:did|completed|finished)\s+[:\-]?\s*(.+)",
+        r"(?:accomplished|achieved)\s+(?:my\s+)?[:\-]?\s*(.+)",
+        r"completed\s*:\s*(.+)",
+        r"finished\s*:\s*(.+)",
+    ]
+    
+    extracted_keywords = None
+    for pattern in completion_patterns:
+        match = re.search(pattern, lower_msg)
+        if match:
+            extracted_keywords = match.group(1).strip()
+            break
+    
+    # Detect completion of every goal
+    all_goals_match = re.search(
+        r"""
+        (?:completed|finished|done|accomplished|achieved)\s+(?:all|every)\s+(?:my\s+)?goals?
+        |(?:all|every)\s+(?:my\s+)?goals?\s+(?:completed|finished|done|accomplished|achieved)
+        |(?:done|completed)\s+with\s+(?:all|every)\s+(?:my\s+)?goals?
+        """,
+        lower_msg,
+        re.IGNORECASE | re.VERBOSE,
+    )
+    if all_goals_match:
+        return {
+            "detected": True,
+            "all_goals": True,
+            "keywords": "all goals",
+            "matched_goals": [],
+            "response": "✅ Marking all your goals as completed for today."
+        }
+
+    if not extracted_keywords or len(extracted_keywords) < 2:
+        return {
+            "detected": False,
+            "keywords": None,
+            "matched_goals": [],
+            "response": None
+        }
+    
+    # Search for matching goals
+    matched_goals = search_goals_by_keyword(extracted_keywords)
+    
+    if not matched_goals:
+        return {
+            "detected": True,
+            "keywords": extracted_keywords,
+            "matched_goals": [],
+            "response": f"I couldn't find a goal matching \"{extracted_keywords}\". Can you tell me the exact goal text or use /viewgoals to see your goals?"
+        }
+    
+    if len(matched_goals) == 1:
+        # Exact match found
+        goal_id, goal_text, goal_type = matched_goals[0]
+        return {
+            "detected": True,
+            "keywords": extracted_keywords,
+            "matched_goals": matched_goals,
+            "matched_goal_id": goal_id,
+            "matched_goal_text": goal_text,
+            "response": f"✅ Marked as done: {goal_text}"
+        }
+    
+    # Multiple matches - ask for clarification
+    goal_list = "\n".join([f"• {text}" for _, text, _ in matched_goals])
+    return {
+        "detected": True,
+        "keywords": extracted_keywords,
+        "matched_goals": matched_goals,
+        "response": f"I found multiple matching goals:\n\n{goal_list}\n\nWhich one did you complete? Reply with the exact goal text or use /viewgoals to see IDs."
+    }
+
+
+def complete_all_goals() -> int:
+    """
+    Marks all active goals as completed for today.
+    Returns how many goals were recorded as done.
+    """
+    all_goals = []
+    for goal_type in ["daily", "weekly", "monthly"]:
+        all_goals.extend(get_goals(goal_type))
+
+    repeating_goals = get_repeating_goals()
+    for goal_id, goal_text, *_ in repeating_goals:
+        all_goals.append((goal_id, goal_text))
+
+    completed_count = 0
+    for goal_id, _ in all_goals:
+        status = get_goal_status_today(goal_id)
+        if status != "done":
+            record_checkin(goal_id, "done")
+            completed_count += 1
+
+    return completed_count
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -618,6 +838,120 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(direct_goal_response)
         return
 
+    # Detect natural language goal addition intent
+    goal_addition = detect_goal_addition_intent(user_message)
+    if goal_addition["detected"]:
+        context.user_data["last_action"] = "add_goal"
+        context.user_data["pending_goal_text"] = goal_addition["goal_text"]
+        
+        if goal_addition["needs_type"]:
+            # We have the goal text but need to ask for type
+            await update.message.reply_text(goal_addition["response"])
+            # Set state to wait for goal type
+            context.user_data["awaiting_goal_type"] = True
+            return
+    
+    # If user is waiting to provide goal type, capture it
+    if context.user_data.get("awaiting_goal_type"):
+        goal_type = normalized.strip().lower()
+        
+        if goal_type not in ["daily", "weekly", "monthly"]:
+            await update.message.reply_text(
+                "Please reply with exactly: daily, weekly, or monthly"
+            )
+            return
+        
+        goal_text = context.user_data.pop("pending_goal_text", None)
+        context.user_data.pop("awaiting_goal_type", None)
+        
+        if goal_text:
+            try:
+                add_goal(goal_text, goal_type)
+                await update.message.reply_text(
+                    f"✅ Goal saved.\n\n"
+                    f"Goal: {goal_text}\n"
+                    f"Type: {goal_type.capitalize()}"
+                )
+                return
+            except Exception as e:
+                await update.message.reply_text("Something went wrong saving your goal. Please try again.")
+                print(f"Error saving goal: {e}")
+                return
+
+    # Detect goal completion intent
+    goal_completion = detect_goal_completion_intent(user_message)
+    if goal_completion["detected"]:
+        if goal_completion.get("all_goals"):
+            try:
+                completed_count = complete_all_goals()
+                context.user_data["last_action"] = "goal_completed"
+                if completed_count == 0:
+                    await update.message.reply_text(
+                        "All your goals are already marked done for today."
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"✅ Marked {completed_count} goal{'' if completed_count == 1 else 's'} as done for today."
+                    )
+                return
+            except Exception as e:
+                await update.message.reply_text(
+                    "Something went wrong recording your goals. Please try again."
+                )
+                print(f"Error recording all goals completion: {e}")
+                return
+
+        matched_goals = goal_completion["matched_goals"]
+        
+        if len(matched_goals) == 1:
+            # We have an exact match - record the completion
+            goal_id = goal_completion["matched_goal_id"]
+            goal_text = goal_completion["matched_goal_text"]
+            
+            try:
+                record_checkin(goal_id, "done")
+                context.user_data["last_action"] = "goal_completed"
+                await update.message.reply_text(goal_completion["response"])
+                return
+            except Exception as e:
+                await update.message.reply_text("Something went wrong recording your goal completion. Please try again.")
+                print(f"Error recording completion: {e}")
+                return
+        
+        else:
+            # Multiple matches or no matches - ask for clarification
+            context.user_data["last_action"] = "goal_completion"
+            context.user_data["completion_keywords"] = goal_completion["keywords"]
+            await update.message.reply_text(goal_completion["response"])
+            return
+
+    # If user is clarifying which goal they completed
+    if context.user_data.get("last_action") == "goal_completion":
+        completion_keywords = context.user_data.get("completion_keywords", "")
+        
+        # Search for goals matching what they said
+        matched_goals = search_goals_by_keyword(user_message)
+        
+        if matched_goals:
+            # Use the first match (most recent)
+            goal_id, goal_text, goal_type = matched_goals[0]
+            
+            try:
+                record_checkin(goal_id, "done")
+                context.user_data.pop("completion_keywords", None)
+                context.user_data["last_action"] = "goal_completed"
+                await update.message.reply_text(f"✅ Marked as done: {goal_text}")
+                return
+            except Exception as e:
+                await update.message.reply_text("Something went wrong recording your goal completion. Please try again.")
+                print(f"Error recording completion: {e}")
+                return
+        else:
+            await update.message.reply_text(
+                f"I couldn't find that goal. Use /viewgoals to see all your goals, or try describing it differently."
+            )
+            return
+
     # Recognize conversational closers when done with the prompt.
     if normalized in ["cool", "okay", "ok", "thanks", "thank you"]:
         last_action = context.user_data.get("last_action")
@@ -639,6 +973,11 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if last_action == "view_goals":
             await update.message.reply_text(
                 "Got it. Use /addgoal to add more goals or /checkin to update today."
+            )
+            return
+        if last_action == "goal_completed":
+            await update.message.reply_text(
+                "Awesome! Goal logged. Use /summary to see your progress, or /addgoal to add another goal."
             )
             return
 

@@ -248,6 +248,49 @@ async def send_monthly_review(bot: Bot):
         logger.error(f"Failed to send monthly review: {e}")
 
 
+async def send_noon_check(bot: Bot):
+    """
+    Sent at 12:00 PM (noon) EAT every day.
+    A mid-day reminder to keep Benjamin on track.
+    """
+    try:
+        message = "⏰ MIDDAY CHECK-IN\n"
+        message += "─────────────────\n\n"
+        message += "It's noon. How is your day going?\n\n"
+        message += "Have you made progress on your goals yet?\n\n"
+        message += "You still have the rest of the day to achieve something.\n"
+        message += "Don't waste it.\n\n"
+        message += "Use /summary to see what you've done so far."
+
+        await bot.send_message(chat_id=YOUR_USER_ID, text=message)
+        logger.info("Noon check-in sent successfully.")
+
+    except Exception as e:
+        logger.error(f"Failed to send noon check-in: {e}")
+
+
+async def send_evening_reflection(bot: Bot):
+    """
+    Sent at 9:00 PM EAT every day.
+    An evening reflection message to prepare for tomorrow.
+    """
+    try:
+        message = "🌙 EVENING REFLECTION\n"
+        message += "─────────────────\n\n"
+        message += "It is 9:00 PM. The day is almost over.\n\n"
+        message += "Reflect on what you accomplished today.\n"
+        message += "What did you do well? What could you have done better?\n\n"
+        message += "Use /summary to see your day's performance.\n\n"
+        message += "Tomorrow is a fresh start to do better."
+
+        await bot.send_message(chat_id=YOUR_USER_ID, text=message)
+        logger.info("Evening reflection sent successfully.")
+
+    except Exception as e:
+        logger.error(f"Failed to send evening reflection: {e}")
+
+
+
 def create_scheduler(bot: Bot) -> AsyncIOScheduler:
     """
     Creates and configures the scheduler with all jobs.
@@ -307,6 +350,24 @@ def create_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot],
         id="monthly_review",
         name="Monthly Review"
+    )
+
+    # 12:00 PM every day — noon check-in
+    scheduler.add_job(
+        send_noon_check,
+        CronTrigger(hour=12, minute=0, timezone=NAIROBI_TZ),
+        args=[bot],
+        id="noon_check",
+        name="Noon Check-in"
+    )
+
+    # 9:00 PM every day — evening reflection
+    scheduler.add_job(
+        send_evening_reflection,
+        CronTrigger(hour=21, minute=0, timezone=NAIROBI_TZ),
+        args=[bot],
+        id="evening_reflection",
+        name="Evening Reflection"
     )
 
     return scheduler

@@ -264,6 +264,51 @@ def get_goal_status_today(goal_id):
         return result[0]
     return None
 
+
+def search_goals_by_keyword(keyword: str):
+    """
+    Searches all goals for ones matching the given keyword(s).
+    Returns list of (goal_id, goal_text, goal_type) tuples that match.
+    Uses simple substring matching (case-insensitive).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Search in all goal types (daily, weekly, monthly, repeating)
+    cursor.execute(
+        "SELECT id, goal_text, goal_type FROM goals WHERE LOWER(goal_text) LIKE ? ORDER BY created_at DESC",
+        (f"%{keyword.lower()}%",)
+    )
+    
+    results = cursor.fetchall()
+    conn.close()
+    return results
+
+
+def get_all_incomplete_daily_goals():
+    """
+    Returns all daily goals that haven't been checked in today.
+    Useful for quick completion matching.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT g.id, g.goal_text 
+        FROM goals g
+        WHERE g.goal_type = 'daily'
+        AND NOT EXISTS (
+            SELECT 1 FROM checkins c
+            WHERE c.goal_id = g.id
+            AND DATE(c.checked_at) = DATE('now')
+        )
+        ORDER BY g.created_at DESC
+    """)
+    
+    results = cursor.fetchall()
+    conn.close()
+    return results
+
 # Run this file directly to initialize the database
 if __name__ == "__main__":
     initialize_database()
