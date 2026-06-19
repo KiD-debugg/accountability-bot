@@ -66,13 +66,13 @@ def initialize_database():
 def add_goal(goal_text, goal_type, repeat_days=None, repeat_length=None, goal_time=None, goal_date=None):
     """
     Adds a new goal to the database.
-    goal_type should be: 'daily', 'weekly', 'monthly', or 'repeating'
+    goal_type should be: 'Daily', 'Weekly', 'Monthly', or 'Repeating'
     repeat_days and repeat_length are only used for repeating goals.
-    goal_time is an optional daily time string in HH:MM format.
+    goal_time is an optional Daily time string in HH:MM format.
     goal_date is an optional date string in YYYY-MM-DD format.
     """
     # Input validation - only allow safe goal types
-    allowed_types = ["daily", "weekly", "monthly", "repeating"]
+    allowed_types = ["Daily", "Weekly", "Monthly", "Repeating"]
     if goal_type not in allowed_types:
         raise ValueError(f"goal_type must be one of {allowed_types}")
 
@@ -210,7 +210,7 @@ def get_repeating_goals_for_weekday(weekday):
 def get_goals(goal_type):
     """
     Retrieves all goals of a specific type.
-    goal_type should be: 'daily', 'weekly', or 'monthly'
+    goal_type should be: 'Daily', 'Weekly', or 'Monthly'
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -319,7 +319,7 @@ def get_all_incomplete_daily_goals():
     cursor.execute("""
         SELECT g.id, g.goal_text 
         FROM goals g
-        WHERE g.goal_type = 'daily'
+        WHERE g.goal_type = 'Daily'
         AND NOT EXISTS (
             SELECT 1 FROM checkins c
             WHERE c.goal_id = g.id
