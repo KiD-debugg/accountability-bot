@@ -335,3 +335,5 @@ def get_all_incomplete_daily_goals():
 # Run this file directly to initialize the database
 if __name__ == "__main__":
     initialize_database()
+    
+    
