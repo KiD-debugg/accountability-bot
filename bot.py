@@ -775,6 +775,125 @@ def parse_direct_goal_message(user_message: str) -> str | None:
     add_goal(goal_text, goal_type)
     return f"✅ Goal saved: {goal_text} ({goal_type})"
 
+def parse_numbered_goals(user_message: str) -> dict:
+    """
+    Detects and parses a list of goals from a single message.
+    Handles numbered lists (1. 2. 3.), word numbers (one, two, three),
+    bullet points (- or *), and mixed formats.
+    
+    Also detects goal type from the message if provided.
+    
+    Returns a dict with:
+        'detected': bool
+        'goals': list of goal text strings
+        'goal_type': 'daily', 'weekly', 'monthly', or None
+        'needs_type': bool — True if goal type was not found in the message
+    """
+    
+    # Word number map
+    word_numbers = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+        "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5
+    }
+    
+    normalized = user_message.strip()
+    lower = normalized.lower()
+    
+    # --- Detect goal type from message ---
+    goal_type = None
+    type_patterns = [
+        r"\b(daily|day)\b",
+        r"\b(weekly|week)\b",
+        r"\b(monthly|month)\b"
+    ]
+    for pattern in type_patterns:
+        match = re.search(pattern, lower)
+        if match:
+            word = match.group(1)
+            if word in ["daily", "day"]:
+                goal_type = "daily"
+            elif word in ["weekly", "week"]:
+                goal_type = "weekly"
+            elif word in ["monthly", "month"]:
+                goal_type = "monthly"
+            break
+    
+    # --- Strip known prefixes before parsing items ---
+    # Remove addgoal / add goal / new goal prefixes
+    cleaned = re.sub(
+        r"^(?:addgoal|add\s+goal|new\s+goal)\s*[,:\-.]?\s*",
+        "",
+        normalized,
+        flags=re.IGNORECASE
+    )
+    # Remove goal type declaration at the start: "daily goal:", "daily:", etc.
+    cleaned = re.sub(
+        r"^(?:daily|weekly|monthly)(?:\s+goals?)?\s*[,:\-.]?\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE
+    )
+    cleaned = cleaned.strip()
+    
+    # --- Try splitting by numeric patterns: "1. item 2. item" or "1) item 2) item" ---
+    # This handles: 1. 2. 3.  |  1) 2) 3)  |  1- 2- 3-
+    numeric_split = re.split(r"\s*\d+[.):\-]\s*", cleaned)
+    # Remove empty strings from split
+    numeric_items = [item.strip() for item in numeric_split if item.strip()]
+    
+    if len(numeric_items) >= 2:
+        return {
+            "detected": True,
+            "goals": numeric_items,
+            "goal_type": goal_type,
+            "needs_type": goal_type is None
+        }
+    
+    # --- Try splitting by word numbers: "one. item two. item" ---
+    # Build a pattern from all word numbers
+    word_num_pattern = r"\s*(?:" + "|".join(word_numbers.keys()) + r")[.):\-]?\s+"
+    word_split = re.split(word_num_pattern, cleaned, flags=re.IGNORECASE)
+    word_items = [item.strip() for item in word_split if item.strip()]
+    
+    if len(word_items) >= 2:
+        return {
+            "detected": True,
+            "goals": word_items,
+            "goal_type": goal_type,
+            "needs_type": goal_type is None
+        }
+    
+    # --- Try splitting by bullet points: "- item - item" or "* item * item" ---
+    bullet_split = re.split(r"\s*[-*•]\s+", cleaned)
+    bullet_items = [item.strip() for item in bullet_split if item.strip()]
+    
+    if len(bullet_items) >= 2:
+        return {
+            "detected": True,
+            "goals": bullet_items,
+            "goal_type": goal_type,
+            "needs_type": goal_type is None
+        }
+    
+    # --- Try splitting by comma if it looks like a list ---
+    # Only treat as a list if there are at least 2 meaningful comma-separated items
+    comma_split = [item.strip() for item in cleaned.split(",") if item.strip()]
+    if len(comma_split) >= 2 and all(len(item) > 3 for item in comma_split):
+        return {
+            "detected": True,
+            "goals": comma_split,
+            "goal_type": goal_type,
+            "needs_type": goal_type is None
+        }
+    
+    # Nothing detected as a list
+    return {
+        "detected": False,
+        "goals": [],
+        "goal_type": goal_type,
+        "needs_type": False
+    }
 
 def detect_goal_addition_intent(user_message: str) -> dict:
     """
@@ -794,7 +913,7 @@ def detect_goal_addition_intent(user_message: str) -> dict:
                 "goal_text": goal_text,
                 "goal_type": None,
                 "needs_type": True,
-                "response": f"Got it! So your goal is: \"{goal_text}\"\n\nWhat type? Reply: daily, weekly, or monthly"
+                "response": f"Got it! So your goal is: \"{goal_text}\"\n\nWhat type? Reply: Daily, Weekly, or Monthly"
             }
     
     # Pattern 2: "Addgoal, monthly goal: ..." or "Add goal: daily goal: ..."
@@ -824,7 +943,7 @@ def detect_goal_addition_intent(user_message: str) -> dict:
                 "goal_text": goal_text,
                 "goal_type": None,
                 "needs_type": True,
-                "response": f"Great! Goal: \"{goal_text}\"\n\nWhat type? Reply: daily, weekly, or monthly"
+                "response": f"Great! Goal: \"{goal_text}\"\n\nWhat type? Reply: Daily, Weekly, or Monthly"
             }
 
     # Pattern 4: "I have a new goal: <goal_text>" or "I have a goal: <goal_text>"
@@ -837,7 +956,7 @@ def detect_goal_addition_intent(user_message: str) -> dict:
                 "goal_text": goal_text,
                 "goal_type": None,
                 "needs_type": True,
-                "response": f"Perfect! Goal: \"{goal_text}\"\n\nWhat type? Reply: daily, weekly, or monthly"
+                "response": f"Perfect! Goal: \"{goal_text}\"\n\nWhat type? Reply: Daily, Weekly, or Monthly"
             }
     
     # Pattern 4: "I want to: <goal_text>" or "I want to track: <goal_text>"
@@ -851,7 +970,7 @@ def detect_goal_addition_intent(user_message: str) -> dict:
                 "goal_text": potential_goal,
                 "goal_type": None,
                 "needs_type": True,
-                "response": f"Alright! Goal: \"{potential_goal}\"\n\nWhat type? Reply: daily, weekly, or monthly"
+                "response": f"Alright! Goal: \"{potential_goal}\"\n\nWhat type? Reply: Daily, Weekly, or Monthly"
             }
     
     # Pattern 5: "I need to: <goal_text>" or "I should: <goal_text>"
@@ -864,7 +983,7 @@ def detect_goal_addition_intent(user_message: str) -> dict:
                 "goal_text": potential_goal,
                 "goal_type": None,
                 "needs_type": True,
-                "response": f"Got it! Goal: \"{potential_goal}\"\n\nWhat type? Reply: daily, weekly, or monthly"
+                "response": f"Got it! Goal: \"{potential_goal}\"\n\nWhat type? Reply: Daily, Weekly, or Monthly"
             }
     
     # No goal addition intent detected
@@ -969,7 +1088,7 @@ def complete_all_goals() -> int:
     Returns how many goals were recorded as done.
     """
     all_goals = []
-    for goal_type in ["daily", "weekly", "monthly"]:
+    for goal_type in ["Daily", "Weekly", "Monthly"]:
         all_goals.extend(get_goals(goal_type))
 
     repeating_goals = get_repeating_goals()
@@ -1024,13 +1143,110 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+# --- Detect addgoal / add goal keyword trigger (case insensitive) ---
+    addgoal_trigger = re.match(
+        r"^(?:addgoal|add\s*goal|ADDGOAL|ADD\s*GOAL)\b",
+        user_message.strip(),
+        re.IGNORECASE
+    )
+
+    # --- Check for numbered/bulleted list of goals ---
+    # Always attempt list parsing if addgoal trigger is present
+    # Also attempt if message contains a number+dot/bracket pattern
+    has_list_pattern = bool(re.search(
+        r"(?:\d+[.):\-]|\bone\b|\btwo\b|\bthree\b|\bfour\b|\bfive\b)",
+        user_message,
+        re.IGNORECASE
+    ))
+
+    if addgoal_trigger or has_list_pattern:
+        parsed = parse_numbered_goals(user_message)
+
+        if parsed["detected"] and len(parsed["goals"]) >= 2:
+            goal_type = parsed["goal_type"]
+            goals_list = parsed["goals"]
+
+            if goal_type is None:
+                # We have goals but no type — store them and ask
+                context.user_data["pending_bulk_goals"] = goals_list
+                context.user_data["awaiting_bulk_goal_type"] = True
+
+                goals_preview = "\n".join(
+                    [f"{i+1}. {g}" for i, g in enumerate(goals_list)]
+                )
+                await update.message.reply_text(
+                    f"I found {len(goals_list)} goals:\n\n{goals_preview}\n\n"
+                    f"What type are these? Reply: daily, weekly, or monthly"
+                )
+                return
+
+            else:
+                # We have both goals and type — save everything
+                saved = []
+                failed = []
+                for goal_text in goals_list:
+                    try:
+                        add_goal(goal_text, goal_type)
+                        saved.append(goal_text)
+                    except Exception as e:
+                        failed.append(goal_text)
+                        print(f"Error saving goal '{goal_text}': {e}")
+
+                context.user_data["last_action"] = "add_goal"
+                response = f"✅ Saved {len(saved)} {goal_type} goals:\n\n"
+                response += "\n".join([f"• {g}" for g in saved])
+
+                if failed:
+                    response += f"\n\n⚠️ Could not save: {', '.join(failed)}"
+
+                await update.message.reply_text(response)
+                return
+
+    # --- Handle response when bot asked for bulk goal type ---
+    if context.user_data.get("awaiting_bulk_goal_type"):
+        goal_type = user_message.strip().lower()
+
+        if goal_type not in ["daily", "weekly", "monthly"]:
+            await update.message.reply_text(
+                "Please reply with exactly: daily, weekly, or monthly"
+            )
+            return
+
+        bulk_goals = context.user_data.pop("pending_bulk_goals", [])
+        context.user_data.pop("awaiting_bulk_goal_type", None)
+
+        if not bulk_goals:
+            await update.message.reply_text(
+                "Something went wrong. Please try adding your goals again."
+            )
+            return
+
+        saved = []
+        failed = []
+        for goal_text in bulk_goals:
+            try:
+                add_goal(goal_text, goal_type)
+                saved.append(goal_text)
+            except Exception as e:
+                failed.append(goal_text)
+                print(f"Error saving goal '{goal_text}': {e}")
+
+        context.user_data["last_action"] = "add_goal"
+        response = f"✅ Saved {len(saved)} {goal_type} goals:\n\n"
+        response += "\n".join([f"• {g}" for g in saved])
+
+        if failed:
+            response += f"\n\n⚠️ Could not save: {', '.join(failed)}"
+
+        await update.message.reply_text(response)
+        return
+
     # Recognize direct goal creation like 'Daily goal: Read 10 pages.'
     direct_goal_response = parse_direct_goal_message(user_message)
     if direct_goal_response:
         context.user_data["last_action"] = "add_goal"
         await update.message.reply_text(direct_goal_response)
         return
-
     # Detect natural language goal addition intent
     goal_addition = detect_goal_addition_intent(user_message)
     if goal_addition["detected"]:
@@ -1048,9 +1264,9 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_goal_type"):
         goal_type = normalized.strip().lower()
         
-        if goal_type not in ["daily", "weekly", "monthly"]:
+        if goal_type not in ["Daily", "Weekly", "Monthly"]:
             await update.message.reply_text(
-                "Please reply with exactly: daily, weekly, or monthly"
+                "Please reply with exactly: Daily, Weekly, or Monthly"
             )
             return
         
