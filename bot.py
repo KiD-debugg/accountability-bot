@@ -593,7 +593,7 @@ async def view_goals(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     message = "YOUR GOALS\n\n"
 
-    for goal_type in ["Daily", "Weekly", "Monthly"]:
+    for goal_type in ["daily", "weekly", "monthly"]:
         goals = get_goals(goal_type)
         message += f"{goal_type.upper()} GOALS:\n"
 
@@ -685,14 +685,14 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     any_goals_found = False
 
     # Go through each category separately
-    for goal_type in ["Daily", "Weekly", "Monthly"]:
+    for goal_type in ["daily", "weekly", "monthly"]:
         goals = get_goals(goal_type)
 
         if not goals:
             continue
 
         any_goals_found = True
-        message += f"{'📅' if goal_type == 'Daily' else '📆' if goal_type == 'Weekly' else '🗓️'} "
+        message += f"{'📅' if goal_type == 'daily' else '📆' if goal_type == 'weekly' else '🗓️'} "
         message += f"{goal_type.upper()} GOALS\n"
         message += "─────────────────\n"
 
@@ -756,12 +756,12 @@ def parse_direct_goal_message(user_message: str) -> str | None:
 
     # Accept messages like "Addgoal, monthly goal: Read 10 pages." or "Add goal: daily goal: Read..."
     match = re.match(
-        r"^(?:add\s*goal|addgoal|new\s*goal)\s*[.,:\-]?\s*(Daily|Weekly|Monthly)\s+goal\s*[:\-]?\s*(.+)$",
+        r"^(?:add\s*goal|addgoal|new\s*goal)\s*[.,:\-]?\s*(daily|weekly|monthly)\s+goal\s*[:\-]?\s*(.+)$",
         normalized,
         re.IGNORECASE,
     )
     if not match:
-        match = re.match(r"^(Daily|Weekly|Monthly)\s+goal\s*[:\-]?\s*(.+)$", normalized, re.IGNORECASE)
+        match = re.match(r"^(daily|weekly|monthly)\s+goal\s*[:\-]?\s*(.+)$", normalized, re.IGNORECASE)
         if not match:
             return None
 
