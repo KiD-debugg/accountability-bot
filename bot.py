@@ -1007,15 +1007,7 @@ def check_category_completion(lower_msg: str) -> str | None:
         if "done" not in lower_msg and "finished" not in lower_msg:
             return None
 
-    # Check for all/every goals
-    all_match = re.search(
-        r"\b(?:all|every|both)\s+(?:my\s+)?goals?\b|\bgoals?\s+(?:all\s+)?(?:completed|finished|done|checked)\b|\ball\s+done\b|\bdone\s+with\s+all\b",
-        lower_msg
-    )
-    if all_match:
-        return "all"
-
-    # Check for daily/today's goals
+    # 1. Check for daily/today's goals first (so "all daily goals" matches daily)
     daily_match = re.search(
         r"\b(?:daily|today|today's|day)\s+goals?\b|\bgoals?\s+for\s+today\b|\bgoals?\s+of\s+today\b",
         lower_msg
@@ -1023,7 +1015,7 @@ def check_category_completion(lower_msg: str) -> str | None:
     if daily_match:
         return "daily"
 
-    # Check for weekly goals
+    # 2. Check for weekly goals
     weekly_match = re.search(
         r"\b(?:weekly|week|this\s+week|this\s+week's)\s+goals?\b|\bgoals?\s+for\s+(?:this\s+)?week\b",
         lower_msg
@@ -1031,7 +1023,7 @@ def check_category_completion(lower_msg: str) -> str | None:
     if weekly_match:
         return "weekly"
 
-    # Check for monthly goals
+    # 3. Check for monthly goals
     monthly_match = re.search(
         r"\b(?:monthly|month|this\s+month|this\s+month's)\s+goals?\b|\bgoals?\s+for\s+(?:this\s+)?month\b",
         lower_msg
@@ -1039,7 +1031,15 @@ def check_category_completion(lower_msg: str) -> str | None:
     if monthly_match:
         return "monthly"
 
-    # Ambiguous: e.g. "completed my goals", "finished goals"
+    # 4. Check for all/every goals (supporting "all of my goals", "all goals", etc.)
+    all_match = re.search(
+        r"\b(?:all|every|both)\s+(?:of\s+)?(?:my\s+)?goals?\b|\bgoals?\s+(?:all\s+)?(?:completed|finished|done|checked)\b|\ball\s+done\b|\bdone\s+with\s+all\b",
+        lower_msg
+    )
+    if all_match:
+        return "all"
+
+    # 5. Ambiguous: e.g. "completed my goals", "finished goals"
     ambiguous_match = re.search(
         r"\b(?:completed|finished|done\s+with|achieved|accomplished)\s+(?:my\s+)?goals?\b|\bgoals?\s+(?:are\s+)?(?:done|completed|finished)\b",
         lower_msg
