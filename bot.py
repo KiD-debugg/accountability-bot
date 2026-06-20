@@ -3,7 +3,7 @@
 
 from asyncio.log import logger
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -11,6 +11,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
     ConversationHandler,
+    CallbackQueryHandler,
 )
 from config import BOT_TOKEN, YOUR_USER_ID
 import logging
@@ -996,6 +997,95 @@ def detect_goal_addition_intent(user_message: str) -> dict:
     }
 
 
+def check_category_completion(lower_msg: str) -> str | None:
+    """
+    Checks if the user's completion message refers to a category of goals.
+    Returns 'all', 'daily', 'weekly', 'monthly', 'ambiguous', or None.
+    """
+    completion_regex = r"\b(completed|finished|done|did|accomplished|achieved|check-in|checkin|checked)\b"
+    if not re.search(completion_regex, lower_msg):
+        if "done" not in lower_msg and "finished" not in lower_msg:
+            return None
+
+    # Check for all/every goals
+    all_match = re.search(
+        r"\b(?:all|every|both)\s+(?:my\s+)?goals?\b|\bgoals?\s+(?:all\s+)?(?:completed|finished|done|checked)\b|\ball\s+done\b|\bdone\s+with\s+all\b",
+        lower_msg
+    )
+    if all_match:
+        return "all"
+
+    # Check for daily/today's goals
+    daily_match = re.search(
+        r"\b(?:daily|today|today's|day)\s+goals?\b|\bgoals?\s+for\s+today\b|\bgoals?\s+of\s+today\b",
+        lower_msg
+    )
+    if daily_match:
+        return "daily"
+
+    # Check for weekly goals
+    weekly_match = re.search(
+        r"\b(?:weekly|week|this\s+week|this\s+week's)\s+goals?\b|\bgoals?\s+for\s+(?:this\s+)?week\b",
+        lower_msg
+    )
+    if weekly_match:
+        return "weekly"
+
+    # Check for monthly goals
+    monthly_match = re.search(
+        r"\b(?:monthly|month|this\s+month|this\s+month's)\s+goals?\b|\bgoals?\s+for\s+(?:this\s+)?month\b",
+        lower_msg
+    )
+    if monthly_match:
+        return "monthly"
+
+    # Ambiguous: e.g. "completed my goals", "finished goals"
+    ambiguous_match = re.search(
+        r"\b(?:completed|finished|done\s+with|achieved|accomplished)\s+(?:my\s+)?goals?\b|\bgoals?\s+(?:are\s+)?(?:done|completed|finished)\b",
+        lower_msg
+    )
+    if ambiguous_match:
+        return "ambiguous"
+
+    return None
+
+
+def complete_category_goals(category: str) -> int:
+    """
+    Marks goals of a specific category (daily, weekly, monthly, repeating, or all) as completed for today.
+    Returns how many goals were recorded as done.
+    """
+    goals_to_complete = []
+    
+    if category in ["daily", "all"]:
+        # Get active daily goals
+        goals_to_complete.extend(get_goals("daily"))
+        
+        # Get repeating goals for today specifically
+        from scheduler import NAIROBI_TZ
+        from datetime import datetime
+        from database import get_repeating_goals_for_weekday
+        today_weekday = datetime.now(NAIROBI_TZ).strftime("%A")
+        repeating_today = get_repeating_goals_for_weekday(today_weekday)
+        for goal_id, goal_text, *_ in repeating_today:
+            goals_to_complete.append((goal_id, goal_text))
+            
+    if category in ["weekly", "all"]:
+        goals_to_complete.extend(get_goals("weekly"))
+        
+    if category in ["monthly", "all"]:
+        goals_to_complete.extend(get_goals("monthly"))
+        
+    completed_count = 0
+    for goal_id, _ in goals_to_complete:
+        status = get_goal_status_today(goal_id)
+        if status != "done":
+            record_checkin(goal_id, "done")
+            completed_count += 1
+            
+    return completed_count
+
+
 def detect_goal_completion_intent(user_message: str) -> dict:
     """
     Detects if user mentions completing a goal and extracts keywords to match.
@@ -1088,7 +1178,7 @@ def complete_all_goals() -> int:
     Returns how many goals were recorded as done.
     """
     all_goals = []
-    for goal_type in ["Daily", "Weekly", "Monthly"]:
+    for goal_type in ["daily", "weekly", "monthly"]:
         all_goals.extend(get_goals(goal_type))
 
     repeating_goals = get_repeating_goals()
@@ -1121,6 +1211,43 @@ async def post_init(application):
     scheduler.start()
     logger.info("Scheduler started successfully with Nairobi timezone.")
 
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles category selection inline keyboard button clicks."""
+    query = update.callback_query
+    if not is_authorized(query.from_user.id):
+        await query.answer("Unauthorized.", show_alert=True)
+        return
+        
+    await query.answer()
+    data = query.data
+    
+    if data.startswith("complete_cat:"):
+        category = data.split(":")[1]
+        completed_count = complete_category_goals(category)
+        context.user_data["last_action"] = "goal_completed"
+        
+        cat_names = {
+            "daily": "Daily Goals",
+            "weekly": "Weekly Goals",
+            "monthly": "Monthly Goals",
+            "all": "All Goals"
+        }
+        cat_name = cat_names.get(category, category.capitalize())
+        
+        if category == "all":
+            msg = f"✅ Marked all {completed_count} goals as done for today. Brilliant! 🎉" if completed_count > 0 else "All your goals are already marked done for today."
+        elif category == "daily":
+            msg = f"✅ Marked {completed_count} Daily and Repeating goals as done for today. Keep it up! 🚀" if completed_count > 0 else "All your Daily and Repeating goals are already marked done for today."
+        elif category == "weekly":
+            msg = f"✅ Marked {completed_count} Weekly goals as done. Awesome work! 💪" if completed_count > 0 else "All your Weekly goals are already marked done for today."
+        elif category == "monthly":
+            msg = f"✅ Marked {completed_count} Monthly goals as done. Incredible dedication! 🏆" if completed_count > 0 else "All your Monthly goals are already marked done for today."
+            
+        await query.edit_message_text(
+            text=f"Which category of goals did you complete? -> Selected: {cat_name}\n\n{msg}"
+        )
+
+
 async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handles any non-command text message.
@@ -1141,6 +1268,44 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "👋 Hi Benjamin! If you're ready, start with a command like /addgoal, /viewgoals, /checkin, or /summary."
         )
+        return
+
+    # Detect category completion intent
+    category_completion = check_category_completion(normalized)
+    if category_completion:
+        if category_completion == "ambiguous":
+            # Show interactive inline buttons
+            keyboard = [
+                [
+                    InlineKeyboardButton("📅 Daily Goals", callback_data="complete_cat:daily"),
+                    InlineKeyboardButton("📆 Weekly Goals", callback_data="complete_cat:weekly"),
+                ],
+                [
+                    InlineKeyboardButton("🗓️ Monthly Goals", callback_data="complete_cat:monthly"),
+                    InlineKeyboardButton("🌟 All Goals", callback_data="complete_cat:all"),
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "Which category of goals did you complete?",
+                reply_markup=reply_markup
+            )
+            return
+
+        # Handle specific categories
+        completed_count = complete_category_goals(category_completion)
+        context.user_data["last_action"] = "goal_completed"
+        
+        if category_completion == "all":
+            msg = f"✅ Marked all {completed_count} goals as done for today. Brilliant! 🎉" if completed_count > 0 else "All your goals are already marked done for today."
+        elif category_completion == "daily":
+            msg = f"✅ Marked {completed_count} Daily and Repeating goals as done for today. Keep it up! 🚀" if completed_count > 0 else "All your Daily and Repeating goals are already marked done for today."
+        elif category_completion == "weekly":
+            msg = f"✅ Marked {completed_count} Weekly goals as done. Awesome work! 💪" if completed_count > 0 else "All your Weekly goals are already marked done for today."
+        elif category_completion == "monthly":
+            msg = f"✅ Marked {completed_count} Monthly goals as done. Incredible dedication! 🏆" if completed_count > 0 else "All your Monthly goals are already marked done for today."
+            
+        await update.message.reply_text(msg)
         return
 
 # --- Detect addgoal / add goal keyword trigger (case insensitive) ---
@@ -1264,9 +1429,9 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_goal_type"):
         goal_type = normalized.strip().lower()
         
-        if goal_type not in ["Daily", "Weekly", "Monthly"]:
+        if goal_type not in ["daily", "weekly", "monthly"]:
             await update.message.reply_text(
-                "Please reply with exactly: Daily, Weekly, or Monthly"
+                "Please reply with exactly: daily, weekly, or monthly"
             )
             return
         
@@ -1477,6 +1642,7 @@ def main():
     app.add_handler(remove_goal_handler)
     app.add_handler(edit_goal_handler)
 
+    app.add_handler(CallbackQueryHandler(handle_callback_query))
     # This must be registered LAST
     # It catches any message that is not a command
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_text))

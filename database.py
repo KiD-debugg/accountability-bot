@@ -72,7 +72,8 @@ def add_goal(goal_text, goal_type, repeat_days=None, repeat_length=None, goal_ti
     goal_date is an optional date string in YYYY-MM-DD format.
     """
     # Input validation - only allow safe goal types
-    allowed_types = ["Daily", "Weekly", "Monthly", "Repeating"]
+    goal_type = goal_type.lower()
+    allowed_types = ["daily", "weekly", "monthly", "repeating"]
     if goal_type not in allowed_types:
         raise ValueError(f"goal_type must be one of {allowed_types}")
 
@@ -319,7 +320,7 @@ def get_all_incomplete_daily_goals():
     cursor.execute("""
         SELECT g.id, g.goal_text 
         FROM goals g
-        WHERE g.goal_type = 'Daily'
+        WHERE g.goal_type = 'daily'
         AND NOT EXISTS (
             SELECT 1 FROM checkins c
             WHERE c.goal_id = g.id
